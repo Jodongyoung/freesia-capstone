@@ -24,11 +24,17 @@ CORS(app)
 
 # ── DCU LLM 설정 ───────────────────────────────────────────────────────────────
 
-_DCU_API_URL  = "https://code.cu.ac.kr/llm/v1/chat/completions"
-_DCU_MODEL    = "Qwen/Qwen3.5-35B-A3B-FP8"
-_DCU_API_KEY  = os.getenv("DCU_LLM_API_KEY", "")
-_TIMEOUT_SEC  = 90          # 응답 대기 최대 시간 (초)
-_MAX_RETRIES  = 3           # 재시도 최대 횟수
+# 💡 수정 완료: .env에 주소가 짧게 들어와도 뒤에 /chat/completions가 강제로 붙도록 수정!
+_base_url = os.getenv("OPENAI_API_BASE", "https://api.groq.com/openai/v1")
+if not _base_url.endswith("/chat/completions"):
+    _DCU_API_URL = _base_url.rstrip("/") + "/chat/completions"
+else:
+    _DCU_API_URL = _base_url
+
+_DCU_MODEL   = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+_DCU_API_KEY = os.getenv("OPENAI_API_KEY", "")
+_TIMEOUT_SEC  = 90           # 응답 대기 최대 시간 (초)
+_MAX_RETRIES  = 3            # 재시도 최대 횟수
 
 _VALID_EMOTIONS = {"기쁨", "슬픔", "분노", "불안", "중립"}
 
@@ -46,9 +52,9 @@ _SYSTEM_PROMPT = (
 )
 
 if not _DCU_API_KEY:
-    logger.warning("[AI서버] DCU_LLM_API_KEY 가 설정되지 않았습니다. .env 파일을 확인하세요.")
+    logger.warning("[AI서버] OPENAI_API_KEY 가 설정되지 않았습니다. .env 파일을 확인하세요.")
 else:
-    logger.info("[AI서버] DCU LLM API 준비 완료 (model=%s)", _DCU_MODEL)
+    logger.info("[AI서버] DCU LLM API 준비 완료 (model=%s, url=%s)", _DCU_MODEL, _DCU_API_URL)
 
 
 # ── 헬스 체크 ─────────────────────────────────────────────────────────────────
@@ -66,16 +72,6 @@ def health():
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
-    """
-    Request Body (JSON):
-        { "text": "사용자 메시지 (시스템 프롬프트가 이미 적용됨)" }
-
-    Response (JSON):
-        {
-            "success": true,
-            "reply": "AI 의 응답 메시지"
-        }
-    """
     body = request.get_json(silent=True)
 
     if not body or "text" not in body:
@@ -103,17 +99,6 @@ def chat():
 
 @app.route("/api/analyze", methods=["POST"])
 def analyze():
-    """
-    Request Body (JSON):
-        { "text": "오늘 하루가 너무 행복했어요." }
-
-    Response (JSON):
-        {
-            "success": true,
-            "emotion": "기쁨",          # 기쁨 | 슬픔 | 분노 | 불안 | 중립
-            "sentimentScore": 0.8       # 0.0 ~ 1.0 (LLM 확신도)
-        }
-    """
     body = request.get_json(silent=True)
 
     if not body or "text" not in body:
@@ -142,10 +127,6 @@ def analyze():
 # ── 내부 분석 함수 ────────────────────────────────────────────────────────────
 
 def _analyze_emotion(text: str) -> tuple[str, float, str]:
-    """
-    DCU LLM API 를 호출해 (감정, 확신도, AI코멘트) 를 반환합니다.
-    API 오류·파싱 실패·타임아웃 발생 시 ("중립", 0.0, "") 을 반환합니다.
-    """
     if not _DCU_API_KEY:
         logger.warning("[AI서버] API 키 없음 — 기본값(중립, 0.0) 반환")
         return "중립", 0.0, ""
@@ -164,8 +145,6 @@ def _analyze_emotion(text: str) -> tuple[str, float, str]:
     }
 
     retry_count = 0
-    last_exception = None
-
     while retry_count < _MAX_RETRIES:
         try:
             logger.info(
@@ -186,41 +165,24 @@ def _analyze_emotion(text: str) -> tuple[str, float, str]:
 
         except requests.exceptions.Timeout as exc:
             retry_count += 1
-            last_exception = exc
             if retry_count < _MAX_RETRIES:
-                logger.warning(
-                    "[AI서버] LLM API 타임아웃 (%ds 초과) — 시도 %d/%d 실패, 재시도 중...",
-                    _TIMEOUT_SEC, retry_count, _MAX_RETRIES
-                )
+                logger.warning("[AI서버] LLM API 타임아웃 — 시도 %d/%d 실패, 재시도 중...", retry_count, _MAX_RETRIES)
             else:
-                logger.error(
-                    "[AI서버] LLM API 타임아웃 (%ds 초과) — 시도 %d/%d 모두 실패, 기본값 반환",
-                    _TIMEOUT_SEC, retry_count, _MAX_RETRIES
-                )
+                logger.error("[AI서버] LLM API 타임아웃 — 모두 실패, 기본값 반환")
                 return "중립", 0.0, ""
 
         except requests.exceptions.RequestException as exc:
             retry_count += 1
-            last_exception = exc
             if retry_count < _MAX_RETRIES:
-                logger.warning(
-                    "[AI서버] LLM API 호출 실패 (%s) — 시도 %d/%d 실패, 재시도 중...",
-                    str(exc), retry_count, _MAX_RETRIES
-                )
+                logger.warning("[AI서버] LLM API 호출 실패 (%s) — 시도 %d/%d 실패, 재시도 중...", str(exc), retry_count, _MAX_RETRIES)
             else:
-                logger.error(
-                    "[AI서버] LLM API 호출 실패 (%s) — 시도 %d/%d 모두 실패, 기본값 반환",
-                    str(exc), retry_count, _MAX_RETRIES
-                )
+                logger.error("[AI서버] LLM API 호출 실패 (%s) — 모두 실패, 기본값 반환", str(exc))
                 return "중립", 0.0, ""
 
-        # 재시도 전 대기 (지수 백오프: 1 초, 2 초, 4 초)
         wait_time = 2 ** retry_count
         logger.info("[AI서버] %d 초 후 재시도...", wait_time)
         time.sleep(wait_time)
 
-    # 최종 실패 시 (이론적으로 위 루프에서 반환되므로 도달하지 않음)
-    logger.error("[AI서버] LLM API 최종 실패 — 기본값 반환")
     return "중립", 0.0, ""
 
 
@@ -234,10 +196,6 @@ _CHAT_SYSTEM_PROMPT = (
 )
 
 def _generate_chat_response(user_message: str) -> str:
-    """
-    DCU LLM API 를 호출하여 채팅 응답을 생성합니다.
-    API 오류·파싱 실패·타임아웃 발생 시 기본 응답을 반환합니다.
-    """
     if not _DCU_API_KEY:
         logger.warning("[AI서버] API 키 없음 — 기본값 반환")
         return "죄송해요, 지금 연결이 안 되고 있어요. 😢"
@@ -256,8 +214,6 @@ def _generate_chat_response(user_message: str) -> str:
     }
 
     retry_count = 0
-    last_exception = None
-
     while retry_count < _MAX_RETRIES:
         try:
             logger.info(
@@ -280,35 +236,20 @@ def _generate_chat_response(user_message: str) -> str:
 
         except requests.exceptions.Timeout as exc:
             retry_count += 1
-            last_exception = exc
             if retry_count < _MAX_RETRIES:
-                logger.warning(
-                    "[채팅] LLM API 타임아웃 (%ds 초과) — 시도 %d/%d 실패, 재시도 중...",
-                    _TIMEOUT_SEC, retry_count, _MAX_RETRIES
-                )
+                logger.warning("[채팅] LLM API 타임아웃 — 시도 %d/%d 실패, 재시도 중...", retry_count, _MAX_RETRIES)
             else:
-                logger.error(
-                    "[채팅] LLM API 타임아웃 (%ds 초과) — 시도 %d/%d 모두 실패, 기본값 반환",
-                    _TIMEOUT_SEC, retry_count, _MAX_RETRIES
-                )
+                logger.error("[채팅] LLM API 타임아웃 — 모두 실패, 기본값 반환")
                 return "죄송해요, 지금 연결이 안 되고 있어요. 😢"
 
         except requests.exceptions.RequestException as exc:
             retry_count += 1
-            last_exception = exc
             if retry_count < _MAX_RETRIES:
-                logger.warning(
-                    "[채팅] LLM API 호출 실패 (%s) — 시도 %d/%d 실패, 재시도 중...",
-                    str(exc), retry_count, _MAX_RETRIES
-                )
+                logger.warning("[채팅] LLM API 호출 실패 (%s) — 시도 %d/%d 실패, 재시도 중...", str(exc), retry_count, _MAX_RETRIES)
             else:
-                logger.error(
-                    "[채팅] LLM API 호출 실패 (%s) — 시도 %d/%d 모두 실패, 기본값 반환",
-                    str(exc), retry_count, _MAX_RETRIES
-                )
+                logger.error("[채팅] LLM API 호출 실패 (%s) — 모두 실패, 기본값 반환", str(exc))
                 return "죄송해요, 지금 연결이 안 되고 있어요. 😢"
 
-        # 재시도 전 대기 (지수 백오프: 1 초, 2 초, 4 초)
         wait_time = 2 ** retry_count
         logger.info("[채팅] %d 초 후 재시도...", wait_time)
         time.sleep(wait_time)
@@ -317,14 +258,6 @@ def _generate_chat_response(user_message: str) -> str:
 
 
 def _parse_llm_output(llm_text: str) -> tuple[str, float, str]:
-    """
-    LLM 이 반환한 텍스트에서 emotion / sentimentScore / aiComment 를 추출합니다.
-
-    LLM 이 가끔 ```json ... ``` 블록으로 감싸거나 앞뒤에 설명을 붙이는 경우를
-    대비해 JSON 객체 부분만 정규식으로 먼저 뽑아냅니다.
-    """
-    # 1) 전체 텍스트를 직접 파싱 시도
-    # 2) 실패하면 중괄호 블록만 추출해서 재시도 (가장 바깥 중괄호 기준)
     candidates = [llm_text]
     brace_match = re.search(r'\{.*\}', llm_text, re.DOTALL)
     if brace_match:
@@ -338,20 +271,15 @@ def _parse_llm_output(llm_text: str) -> tuple[str, float, str]:
             score: float     = float(score_raw)
             ai_comment: str  = str(data.get("aiComment", "")).strip()
 
-            # 유효성 검사
             if emotion not in _VALID_EMOTIONS:
-                logger.warning("[AI서버] 알 수 없는 감정값 '%s' — 중립으로 대체", emotion)
                 emotion = "중립"
-            score = max(0.0, min(1.0, score))   # 0.0~1.0 범위 클램핑
+            score = max(0.0, min(1.0, score))
 
-            logger.info("[AI서버] 분석 완료 — emotion=%s, score=%.4f, comment=%s",
-                        emotion, score, ai_comment[:30])
             return emotion, score, ai_comment
 
         except (json.JSONDecodeError, TypeError, ValueError):
             continue
 
-    logger.error("[AI서버] JSON 파싱 최종 실패 — llm_text=%s", llm_text[:200])
     return "중립", 0.0, ""
 
 
