@@ -1,8 +1,10 @@
-# --- 최상위 환경 변수 및 에디터 설정 ---
+# --- 최상위 환경 변수 및 에디터/OS 설정 ---
 .env
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
+*.sql
 
 # --- 1. React (Frontend) ---
 frontend/node_modules/
@@ -14,6 +16,8 @@ frontend/.env*
 backend/build/
 backend/out/
 backend/.gradle/
+backend/bin/
+bin/
 backend/src/main/resources/application-secret.yml
 
 # --- 3. Python (AI Server) ---
