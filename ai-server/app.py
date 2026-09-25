@@ -24,14 +24,14 @@ CORS(app)
 
 # ── DCU LLM 설정 ───────────────────────────────────────────────────────────────
 
-# 💡 수정 완료: .env에 주소가 짧게 들어와도 뒤에 /chat/completions가 강제로 붙도록 수정!
 _base_url = os.getenv("OPENAI_API_BASE", "https://api.groq.com/openai/v1")
 if not _base_url.endswith("/chat/completions"):
     _DCU_API_URL = _base_url.rstrip("/") + "/chat/completions"
 else:
     _DCU_API_URL = _base_url
 
-_DCU_MODEL   = os.getenv("MODEL_NAME", "llama-3.3-70b-versatile")
+# 💡 기본 모델을 가장 안정적인 llama3-8b-8192로 변경해뒀다!
+_DCU_MODEL   = os.getenv("MODEL_NAME", "llama3-8b-8192")
 _DCU_API_KEY = os.getenv("OPENAI_API_KEY", "")
 _TIMEOUT_SEC  = 90           # 응답 대기 최대 시간 (초)
 _MAX_RETRIES  = 3            # 재시도 최대 횟수
@@ -158,6 +158,11 @@ def _analyze_emotion(text: str) -> tuple[str, float, str]:
                 headers=headers,
                 timeout=_TIMEOUT_SEC,
             )
+            
+            # 🚨 에러 원인 추적용 로그 추가 (여기가 핵심이다!) 🚨
+            if not resp.ok:
+                logger.error(f"[AI서버] 🚨 404 찐 원인: {resp.text}")
+
             resp.raise_for_status()
 
             logger.info("[AI서버] LLM API 성공 (시도 %d/%d)", retry_count + 1, _MAX_RETRIES)
@@ -227,6 +232,11 @@ def _generate_chat_response(user_message: str) -> str:
                 headers=headers,
                 timeout=_TIMEOUT_SEC,
             )
+            
+            # 🚨 에러 원인 추적용 로그 추가 🚨
+            if not resp.ok:
+                logger.error(f"[채팅] 🚨 404 찐 원인: {resp.text}")
+
             resp.raise_for_status()
 
             logger.info("[채팅] LLM API 성공 (시도 %d/%d)", retry_count + 1, _MAX_RETRIES)

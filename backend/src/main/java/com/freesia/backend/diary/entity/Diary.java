@@ -1,6 +1,7 @@
 package com.freesia.backend.diary.entity;
 
 import com.freesia.backend.member.entity.Member;
+import com.freesia.backend.recommendation.entity.Recommendation;
 import jakarta.persistence.*;
 import lombok.*;
 import org.springframework.data.annotation.CreatedDate;
@@ -10,6 +11,8 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "diaries")
@@ -53,6 +56,18 @@ public class Diary {
     @Column(nullable = false, length = 20)
     private DiaryStatus status;
 
+    /** 
+     * [핵심] 일기별 고정 추천 콘텐츠 목록 (N:M 매핑)
+     * 이 일기를 작성할 당시 추천받았던 콘텐츠들이 diary_recommendations 테이블을 통해 영구 보존됩니다.
+     */
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+        name = "diary_recommendations",
+        joinColumns = @JoinColumn(name = "diary_id"),
+        inverseJoinColumns = @JoinColumn(name = "recommendation_id")
+    )
+    private List<Recommendation> recommendations = new ArrayList<>();
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;
@@ -62,7 +77,7 @@ public class Diary {
 
     @Builder
     public Diary(Member member, String content, String emoji, LocalDate date,
-            String emotion, Double sentimentScore, String aiComment) {
+                 String emotion, Double sentimentScore, String aiComment) {
         this.member = member;
         this.content = content;
         this.emoji = emoji;
@@ -71,6 +86,7 @@ public class Diary {
         this.sentimentScore = sentimentScore;
         this.aiComment = aiComment;
         this.status = DiaryStatus.ACTIVE;
+        this.recommendations = new ArrayList<>();
     }
 
     public void update(String content, String emoji, LocalDate date) {
@@ -83,13 +99,16 @@ public class Diary {
         this.status = DiaryStatus.DELETED;
     }
 
-    /**
-     * DB 에 INSERT 되기 직전에 호출됨.
-     * date 필드가 null 이면 서버의 현재 날짜 (KST) 를 자동 할당.
-     */
+    /** 일기에 추천 콘텐츠 목록을 영구 연결합니다 */
+    public void setRecommendations(List<Recommendation> recommendations) {
+        this.recommendations = recommendations;
+    }
+
     @PrePersist
     public void prePersist() {
-        // this.date = LocalDate.now();
-        this.date = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 날짜가 지정되지 않았을 때만 서버 기준 오늘 날짜를 할당 (과거 날짜 덮어쓰기 방어)
+        if (this.date == null) {
+            this.date = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        }
     }
 }
